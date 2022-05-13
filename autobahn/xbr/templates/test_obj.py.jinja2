@@ -14,7 +14,7 @@ from autobahn.wamp.serializer import JsonObjectSerializer, MsgPackObjectSerializ
 
 import flatbuffers
 import pytest
-import numpy as np
+from zlmdb import datetime64
 from txaio import time_ns
 
 
@@ -55,8 +55,8 @@ def fill_{{ metadata.classname }}(obj: {{ metadata.classname }}):
     obj.{{ metadata.fields[field_name].name }} = random.random() > 0.5
     {% elif metadata.fields[field_name].type.map('python', metadata.fields[field_name].attrs, True) == 'uuid.UUID' %}
     obj.{{ metadata.fields[field_name].name }} = uuid.uuid4()
-    {% elif metadata.fields[field_name].type.map('python', metadata.fields[field_name].attrs, True) == 'np.datetime64' %}
-    obj.{{ metadata.fields[field_name].name }} = np.datetime64(time_ns(), 'ns')
+    {% elif metadata.fields[field_name].type.map('python', metadata.fields[field_name].attrs, True) == 'datetime64' %}
+    obj.{{ metadata.fields[field_name].name }} = datetime64(time_ns())
     {% else %}
     obj.{{ metadata.fields[field_name].name }} = None
     {% endif %}
@@ -117,8 +117,8 @@ def test_{{ metadata.classname }}_empty(builder):
     assert empty_obj.{{ metadata.fields[field_name].name }} is False
     {% elif metadata.fields[field_name].type.map('python', metadata.fields[field_name].attrs, True) == 'uuid.UUID' %}
     assert empty_obj.{{ metadata.fields[field_name].name }} == uuid.UUID(bytes=b'\0'*16)
-    {% elif metadata.fields[field_name].type.map('python', metadata.fields[field_name].attrs, True) == 'np.datetime64' %}
-    assert empty_obj.{{ metadata.fields[field_name].name }} == np.datetime64(0, 'ns')
+    {% elif metadata.fields[field_name].type.map('python', metadata.fields[field_name].attrs, True) == 'datetime64' %}
+    assert empty_obj.{{ metadata.fields[field_name].name }} == datetime64(0, 'ns')
     {% else %}
     assert empty_obj.{{ metadata.fields[field_name].name }} is None
     {% endif %}
@@ -148,8 +148,8 @@ def test_{{ metadata.classname }}_empty(builder):
     assert _obj.{{ metadata.fields[field_name].name }} is False
     {% elif metadata.fields[field_name].type.map('python', metadata.fields[field_name].attrs, True) == 'uuid.UUID' %}
     assert _obj.{{ metadata.fields[field_name].name }} == uuid.UUID(bytes=b'\0'*16)
-    {% elif metadata.fields[field_name].type.map('python', metadata.fields[field_name].attrs, True) == 'np.datetime64' %}
-    assert _obj.{{ metadata.fields[field_name].name }} == np.datetime64(0, 'ns')
+    {% elif metadata.fields[field_name].type.map('python', metadata.fields[field_name].attrs, True) == 'datetime64' %}
+    assert _obj.{{ metadata.fields[field_name].name }} == datetime64(0, 'ns')
     {% else %}
     assert _obj.{{ metadata.fields[field_name].name }} is None
     {% endif %}

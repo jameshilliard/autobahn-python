@@ -36,7 +36,7 @@ from typing import Optional, List, Dict
 import click
 import nacl
 import web3
-import numpy as np
+from zlmdb import datetime64
 from time import time_ns
 from eth_utils.conversions import hexstr_if_str, to_hex
 
@@ -100,8 +100,8 @@ class Profile(object):
                  network_realm: Optional[str] = None,
                  member_oid: Optional[uuid.UUID] = None,
                  vaction_oid: Optional[uuid.UUID] = None,
-                 vaction_requested: Optional[np.datetime64] = None,
-                 vaction_verified: Optional[np.datetime64] = None,
+                 vaction_requested: Optional[datetime64] = None,
+                 vaction_verified: Optional[datetime64] = None,
                  data_url: Optional[str] = None,
                  data_realm: Optional[str] = None,
                  infura_url: Optional[str] = None,
@@ -216,12 +216,12 @@ class Profile(object):
                     member_oid = None
             elif k == 'vaction_requested':
                 if type(v) == int and v:
-                    vaction_requested = np.datetime64(v, 'ns')
+                    vaction_requested = datetime64(v)
                 else:
                     vaction_requested = v
             elif k == 'vaction_verified':
                 if type(v) == int:
-                    vaction_verified = np.datetime64(v, 'ns')
+                    vaction_verified = datetime64(v)
                 else:
                     vaction_verified = v
             elif k == 'data_url':
@@ -377,7 +377,7 @@ class UserConfig(object):
             algo = struct.unpack('>L', header[8:12])[0]
             data_len = struct.unpack('>L', header[12:16])[0]
             created = struct.unpack('>Q', header[16:24])[0]
-            # created_ts = np.datetime64(created, 'ns')
+            # created_ts = datetime64(created)
 
             assert algo in [0, 1]
             assert data_len == len(body)
