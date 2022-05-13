@@ -65,7 +65,7 @@ import hashlib
 import multihash
 import cbor2
 
-import numpy as np
+from zlmdb import datetime64
 
 import txaio
 txaio.use_twisted()
@@ -327,7 +327,7 @@ class Client(ApplicationSession):
             member_data['oid'] = uuid.UUID(bytes=member_data['oid'])
             member_data['balance']['eth'] = web3.Web3.fromWei(unpack_uint256(member_data['balance']['eth']), 'ether')
             member_data['balance']['xbr'] = web3.Web3.fromWei(unpack_uint256(member_data['balance']['xbr']), 'ether')
-            member_data['created'] = np.datetime64(member_data['created'], 'ns')
+            member_data['created'] = datetime64(member_data['created'])
 
             member_level = member_data['level']
             MEMBER_LEVEL_TO_STR = {
@@ -379,7 +379,7 @@ class Client(ApplicationSession):
                     result = await self.call('xbr.network.get_actor_in_market', market_oid, actor['address'])
                     for actor in result:
                         actor['actor'] = web3.Web3.toChecksumAddress(actor['actor'])
-                        actor['timestamp'] = np.datetime64(actor['timestamp'], 'ns')
+                        actor['timestamp'] = datetime64(actor['timestamp'])
                         actor['joined'] = unpack_uint256(actor['joined']) if actor['joined'] else None
                         actor['market'] = uuid.UUID(bytes=actor['market'])
                         actor['security'] = web3.Web3.fromWei(unpack_uint256(actor['security']), 'ether') if actor['security'] else None
@@ -643,7 +643,7 @@ class Client(ApplicationSession):
             market['owner'] = web3.Web3.toChecksumAddress(market['owner'])
             market['maker'] = web3.Web3.toChecksumAddress(market['maker'])
             market['coin'] = web3.Web3.toChecksumAddress(market['coin'])
-            market['timestamp'] = np.datetime64(market['timestamp'], 'ns')
+            market['timestamp'] = datetime64(market['timestamp'])
 
             self.log.info('Market {market_oid} information:\n\n{market}\n',
                           market_oid=hlid(market_oid), market=pformat(market))

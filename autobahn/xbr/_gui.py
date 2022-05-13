@@ -51,7 +51,7 @@ from twisted.internet import reactor
 
 import web3
 
-import numpy as np
+from zlmdb import datetime64
 
 import click
 from humanize import naturaldelta, naturaltime
@@ -135,7 +135,7 @@ class ApplicationWindow(Gtk.Assistant):
             self.output_ethadr_raw = binascii.a2b_hex(self.output_ethadr[2:])
             info = yield self.session.get_status()
             if info:
-                now = str(np.datetime64(np.datetime64(info['status']['now'], 'ns'), 's'))
+                now = str(datetime64(info['status']['now']) * 1000000000)
                 self._label5_now.set_label(now)
                 self._label5_chain.set_label(str(info['status']['chain']))
                 self._label5_status.set_label(str(info['status']['status']))
@@ -163,8 +163,8 @@ class ApplicationWindow(Gtk.Assistant):
                 self.log.info('ok, ethadr {output_ethadr} already is a member: {member_data}',
                               output_ethadr=self.output_ethadr, member_data=member_data)
                 self.output_member_data = member_data
-                created_ago = naturaldelta((np.datetime64(time_ns(), 'ns') - self.output_member_data['created']) / 1000000000.)
-                created = naturaltime(np.datetime64(self.output_member_data['created'], 's'))
+                created_ago = naturaldelta((datetime64(time_ns()) - self.output_member_data['created']) / 1000000000.)
+                created = naturaltime(datetime64(self.output_member_data['created']) * 1000000000)
                 self._label2.set_label(str(self.output_member_data['oid']))
                 self._label4.set_label(str(self.output_member_data['address']))
                 self._label6.set_label('{} ({} ago)'.format(created, created_ago))
@@ -568,7 +568,7 @@ class ApplicationWindow(Gtk.Assistant):
             self.profile.email = self.input_email
             self.profile.username = self.input_username
             self.profile.vaction_oid = str(uuid.UUID(bytes=result['vaction_oid']))
-            self.profile.vaction_requested = str(np.datetime64(result['timestamp'], 'ns'))
+            self.profile.vaction_requested = str(datetime64(result['timestamp']))
 
             self.config.profiles[self.profile_name] = self.profile
             self.config.save(self.input_password)
@@ -647,7 +647,7 @@ class ApplicationWindow(Gtk.Assistant):
             result = yield self.session._do_onboard_member_verify(vaction_oid, vaction_code)
             pprint(result)
 
-            self.profile.vaction_verified = str(np.datetime64(result['created'], 'ns'))
+            self.profile.vaction_verified = str(datetime64(result['created']))
             self.profile.vaction_transaction = '0x' + str(binascii.b2a_hex(result['transaction']).decode())
             self.profile.member_oid = str(uuid.UUID(bytes=result['member_oid']))
             self.config.profiles[self.profile_name] = self.profile
@@ -862,7 +862,7 @@ class ApplicationClient(Client):
                                                                   'ether')
                 member_data['balance']['xbr'] = web3.Web3.fromWei(unpack_uint256(member_data['balance']['xbr']),
                                                                   'ether')
-                member_data['created'] = np.datetime64(member_data['created'], 'ns')
+                member_data['created'] = datetime64(member_data['created'])
 
                 member_level = member_data['level']
                 member_data['level'] = {
