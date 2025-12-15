@@ -2346,20 +2346,41 @@ wstest-consolidate-reports:
     du -hs docs/_static/websocket/conformance/
 
 # Download GitHub release artifacts (usage: `just download-github-release` for nightly, or `just download-github-release stable`)
-# Downloads wheels, sdist, conformance reports, and FlatBuffers schemas
+# Downloads wheels, sdist, conformance reports, FlatBuffers schemas, and verifies checksums
+# This is the unified download recipe for both docs integration and release notes generation
 download-github-release release_type="nightly":
     #!/usr/bin/env bash
-    set -e
+    set -euo pipefail
 
     RELEASE_TYPE="{{ release_type }}"
-    echo "==> Downloading GitHub release artifacts for: ${RELEASE_TYPE}"
+    REPO="crossbario/autobahn-python"
+
     echo ""
+    echo "════════════════════════════════════════════════════════════"
+    echo "  Downloading GitHub Release Artifacts"
+    echo "════════════════════════════════════════════════════════════"
+    echo ""
+    echo "Release type: ${RELEASE_TYPE}"
+    echo ""
+
+    # Check if gh is available and authenticated
+    if ! command -v gh &> /dev/null; then
+        echo "❌ ERROR: GitHub CLI (gh) is not installed"
+        echo "   Install: https://cli.github.com/"
+        exit 1
+    fi
+
+    if ! gh auth status &> /dev/null; then
+        echo "❌ ERROR: GitHub CLI is not authenticated"
+        echo "   Run: gh auth login"
+        exit 1
+    fi
 
     # Determine which release tag to download
     case "${RELEASE_TYPE}" in
         nightly)
             echo "==> Finding latest nightly release (tagged as master-YYYYMMDDHHMM)..."
-            RELEASE_TAG=$(gh release list --repo crossbario/autobahn-python --limit 20 \
+            RELEASE_TAG=$(gh release list --repo "${REPO}" --limit 20 \
               | grep -o 'master-[0-9]*' \
               | head -1)
             if [ -z "$RELEASE_TAG" ]; then
@@ -2371,7 +2392,7 @@ download-github-release release_type="nightly":
 
         stable|latest)
             echo "==> Finding latest stable release..."
-            RELEASE_TAG=$(gh release view --repo crossbario/autobahn-python --json tagName -q '.tagName' 2>/dev/null || true)
+            RELEASE_TAG=$(gh release view --repo "${REPO}" --json tagName -q '.tagName' 2>/dev/null || true)
             if [ -z "$RELEASE_TAG" ]; then
                 echo "❌ ERROR: No stable release found"
                 exit 1
@@ -2381,7 +2402,7 @@ download-github-release release_type="nightly":
 
         development|dev)
             echo "==> Finding latest development release (tagged as fork-*)..."
-            RELEASE_TAG=$(gh release list --repo crossbario/autobahn-python --limit 20 \
+            RELEASE_TAG=$(gh release list --repo "${REPO}" --limit 20 \
               | grep -o 'fork-[^[:space:]]*' \
               | head -1)
             if [ -z "$RELEASE_TAG" ]; then
@@ -2398,18 +2419,105 @@ download-github-release release_type="nightly":
             ;;
     esac
 
-    # Create download directory
-    DOWNLOAD_DIR="/tmp/autobahn-release-artifacts-${RELEASE_TAG}"
+    # Verify release exists
+    echo ""
+    echo "==> Verifying release exists..."
+    if ! gh release view "${RELEASE_TAG}" --repo "${REPO}" &> /dev/null; then
+        echo "❌ ERROR: Release '${RELEASE_TAG}' not found"
+        echo ""
+        echo "Available releases:"
+        gh release list --repo "${REPO}" --limit 10
+        exit 1
+    fi
+    echo "✅ Release found"
+
+    # Create download directory (use /tmp/release-artifacts/ for compatibility with generate-release-notes)
+    DOWNLOAD_DIR="/tmp/release-artifacts/${RELEASE_TAG}"
+    if [ -d "${DOWNLOAD_DIR}" ]; then
+        echo ""
+        echo "==> Cleaning existing directory: ${DOWNLOAD_DIR}"
+        rm -rf "${DOWNLOAD_DIR}"
+    fi
     mkdir -p "${DOWNLOAD_DIR}"
 
     echo ""
     echo "==> Downloading all release artifacts using gh..."
     gh release download "${RELEASE_TAG}" \
-        --repo crossbario/autobahn-python \
+        --repo "${REPO}" \
         --dir "${DOWNLOAD_DIR}" \
+        --pattern "*" \
         --clobber
 
     cd "${DOWNLOAD_DIR}"
+
+    # Count different types of files
+    WHEEL_COUNT=$(ls -1 *.whl 2>/dev/null | wc -l || echo "0")
+    TARBALL_COUNT=$(ls -1 *.tar.gz 2>/dev/null | wc -l || echo "0")
+    CHECKSUM_COUNT=$(ls -1 *CHECKSUMS* 2>/dev/null | wc -l || echo "0")
+
+    echo ""
+    echo "==> Downloaded assets:"
+    ls -la
+    echo ""
+    echo "==> Asset summary:"
+    echo "    Wheels:     ${WHEEL_COUNT}"
+    echo "    Tarballs:   ${TARBALL_COUNT}"
+    echo "    Checksums:  ${CHECKSUM_COUNT}"
+
+    # Verify checksums if available
+    CHECKSUM_FILE=""
+    for f in CHECKSUMS.sha256 wheels-CHECKSUMS.sha256 docker-CHECKSUMS.sha256; do
+        if [ -f "$f" ]; then
+            CHECKSUM_FILE="$f"
+            break
+        fi
+    done
+
+    if [ -n "${CHECKSUM_FILE}" ]; then
+        echo ""
+        echo "==> Verifying checksums from ${CHECKSUM_FILE}..."
+        VERIFIED=0
+        FAILED=0
+        SKIPPED=0
+        while IFS= read -r line; do
+            # Skip empty lines
+            [ -z "$line" ] && continue
+
+            # Parse: SHA256(filename)= checksum  or  SHA2-256(filename)= checksum
+            FILE_PATH=$(echo "$line" | sed -E 's/^SHA2?-?256\(([^)]+)\)=.*/\1/')
+            EXPECTED_CHECKSUM=$(echo "$line" | awk -F'= ' '{print $2}')
+
+            # Handle ./prefix
+            FILE_PATH="${FILE_PATH#./}"
+
+            if [ -f "$FILE_PATH" ]; then
+                ACTUAL_CHECKSUM=$(openssl sha256 "$FILE_PATH" | awk '{print $2}')
+                if [ "$ACTUAL_CHECKSUM" = "$EXPECTED_CHECKSUM" ]; then
+                    VERIFIED=$((VERIFIED + 1))
+                else
+                    echo "    ❌ MISMATCH: $FILE_PATH"
+                    echo "       Expected: $EXPECTED_CHECKSUM"
+                    echo "       Actual:   $ACTUAL_CHECKSUM"
+                    FAILED=$((FAILED + 1))
+                fi
+            else
+                SKIPPED=$((SKIPPED + 1))
+            fi
+        done < "${CHECKSUM_FILE}"
+
+        if [ $FAILED -gt 0 ]; then
+            echo "    ❌ ERROR: ${FAILED} file(s) failed verification!"
+            exit 1
+        else
+            echo "    ✅ ${VERIFIED} file(s) verified successfully"
+            if [ $SKIPPED -gt 0 ]; then
+                echo "    (${SKIPPED} entries skipped - files not present or in sub-checksum files)"
+            fi
+        fi
+    else
+        echo ""
+        echo "⚠️  No checksum file found - skipping verification"
+    fi
 
     echo ""
     echo "==> Extracting documentation artifacts..."
@@ -2442,29 +2550,24 @@ download-github-release release_type="nightly":
     fi
 
     echo ""
-    echo "==> Downloaded artifacts inventory:"
-    echo ""
-    WHEEL_COUNT=$(find . -maxdepth 1 -name "*.whl" | wc -l)
-    SDIST_COUNT=$(find . -maxdepth 1 -name "autobahn-*.tar.gz" | wc -l)
-    echo "Wheels:       ${WHEEL_COUNT}"
-    echo "Source dist:  ${SDIST_COUNT}"
-    echo ""
-    echo "Files:"
-    ls -lh
-
-    echo ""
     echo "════════════════════════════════════════════════════════════"
-    echo "✅ Artifacts downloaded to: ${DOWNLOAD_DIR}"
+    echo "  ✅ Download Complete"
     echo "════════════════════════════════════════════════════════════"
     echo ""
-    echo "Release: ${RELEASE_TAG}"
+    echo "Release:  ${RELEASE_TAG}"
     echo "Location: ${DOWNLOAD_DIR}"
     echo ""
     echo "Contents:"
-    echo "  - Wheels: ${DOWNLOAD_DIR}/*.whl"
-    echo "  - Source dist: ${DOWNLOAD_DIR}/autobahn-*.tar.gz"
-    echo "  - Conformance reports: ${DOWNLOAD_DIR}/with-nvx/, ${DOWNLOAD_DIR}/without-nvx/"
-    echo "  - FlatBuffers schemas: ${DOWNLOAD_DIR}/flatbuffers/"
+    echo "  - Wheels:             ${DOWNLOAD_DIR}/*.whl"
+    echo "  - Source dist:        ${DOWNLOAD_DIR}/autobahn-*.tar.gz"
+    echo "  - Conformance:        ${DOWNLOAD_DIR}/with-nvx/, without-nvx/"
+    echo "  - FlatBuffers:        ${DOWNLOAD_DIR}/flatbuffers/"
+    echo "  - Chain-of-custody:   ${DOWNLOAD_DIR}/*CHECKSUMS*, *VALIDATION*, *build-info*"
+    echo ""
+    echo "Next steps:"
+    echo "  - Docs integration:   just docs-integrate-github-release ${RELEASE_TAG}"
+    echo "  - Release notes:      just generate-release-notes <version> ${RELEASE_TAG}"
+    echo "  - Changelog:          just prepare-changelog <version>"
     echo ""
 
 # Integrate downloaded GitHub release artifacts into docs build (usage: `just docs-integrate-github-release` or `just docs-integrate-github-release master-202510180103`)
@@ -2490,13 +2593,13 @@ docs-integrate-github-release release_tag="":
     # If no tag specified, find the most recently downloaded artifacts
     if [ -z "${RELEASE_TAG}" ]; then
         echo "==> No release tag specified. Finding latest downloaded artifacts..."
-        LATEST_DIR=$(find /tmp -maxdepth 1 -type d -name "autobahn-release-artifacts-*" -printf "%T@ %p\n" 2>/dev/null \
+        LATEST_DIR=$(find /tmp/release-artifacts -maxdepth 1 -type d -printf "%T@ %p\n" 2>/dev/null \
           | sort -rn \
           | head -1 \
           | cut -d' ' -f2-)
 
-        if [ -z "${LATEST_DIR}" ]; then
-            echo "❌ ERROR: No downloaded release artifacts found in /tmp/"
+        if [ -z "${LATEST_DIR}" ] || [ "${LATEST_DIR}" = "/tmp/release-artifacts" ]; then
+            echo "❌ ERROR: No downloaded release artifacts found in /tmp/release-artifacts/"
             echo ""
             echo "Please download artifacts first using:"
             echo "  just download-github-release"
@@ -2504,11 +2607,11 @@ docs-integrate-github-release release_tag="":
             exit 1
         fi
 
-        RELEASE_TAG=$(basename "${LATEST_DIR}" | sed 's/autobahn-release-artifacts-//')
+        RELEASE_TAG=$(basename "${LATEST_DIR}")
         echo "✅ Found latest downloaded artifacts: ${RELEASE_TAG}"
     fi
 
-    DOWNLOAD_DIR="/tmp/autobahn-release-artifacts-${RELEASE_TAG}"
+    DOWNLOAD_DIR="/tmp/release-artifacts/${RELEASE_TAG}"
 
     if [ ! -d "${DOWNLOAD_DIR}" ]; then
         echo "❌ ERROR: Release artifacts not found at: ${DOWNLOAD_DIR}"
@@ -2637,12 +2740,6 @@ docs-integrate-github-release release_tag="":
 # -- Release workflow recipes
 # -----------------------------------------------------------------------------
 
-# Download ALL artifacts from a GitHub release (for release preparation)
-# Usage: just download-release-artifacts master-202512092131
-# This downloads everything needed for generate-release-notes and prepare-changelog
-download-release-artifacts release_name:
-    .cicd/scripts/download-release-artifacts.sh "{{ release_name }}" "crossbario/autobahn-python"
-
 # Generate changelog entry from git history, audit files, and GitHub issues
 # Usage: just prepare-changelog 25.12.1
 # Requires: gh CLI authenticated (for fetching issue titles)
@@ -2651,7 +2748,7 @@ prepare-changelog version:
 
 # Generate release notes entry from downloaded artifacts
 # Usage: just generate-release-notes 25.12.1 master-202512092131
-# Requires: artifacts downloaded via `just download-release-artifacts`
+# Requires: artifacts downloaded via `just download-github-release`
 generate-release-notes version release_name:
     .cicd/scripts/generate-release-notes.sh "{{ version }}" "{{ release_name }}" "crossbario/autobahn-python"
 
