@@ -45,6 +45,15 @@ node.key
 src/autobahn/nvx/_nvx_*.c
 src/_nvx_*.c
 
+# Build artifact: flatc binary (compiled from deps/flatbuffers during wheel build)
+src/autobahn/_flatc/bin/
+
+# Build artifact: reflection.bfbs (generated from reflection.fbs during wheel build)
+src/autobahn/flatbuffers/reflection.bfbs
+
+# Build artifact: wamp.bfbs (generated from wamp.fbs during wheel build)
+src/autobahn/wamp/flatbuffers/wamp.bfbs
+
 .wheels
 get-pip.py
 docs/autoapi/

@@ -1150,6 +1150,258 @@ test-serdes venv="": (install-tools venv) (install-dev venv)
         examples/serdes/tests/test_eventreceived.py
 
 # -----------------------------------------------------------------------------
+# -- Smoke tests (package verification)
+# -----------------------------------------------------------------------------
+
+# Run smoke tests on an installed autobahn package (verifies FlatBuffers work)
+# This is used by test-wheel-install and test-sdist-install after installation
+test-smoke venv="":
+    #!/usr/bin/env bash
+    set -e
+    VENV_NAME="{{ venv }}"
+    if [ -z "${VENV_NAME}" ]; then
+        VENV_NAME=$(just --quiet _get-system-venv-name)
+    fi
+    VENV_PYTHON=$(just --quiet _get-venv-python "${VENV_NAME}")
+    VENV_PATH="{{ VENV_DIR }}/${VENV_NAME}"
+
+    echo "Running smoke tests with Python: $(${VENV_PYTHON} --version)"
+    echo "Venv: ${VENV_PATH}"
+    echo ""
+
+    # Run the smoke test Python script
+    ${VENV_PYTHON} "{{ PROJECT_DIR }}/scripts/smoke_test.py"
+
+# Test bundled flatc compiler and Python API
+test-bundled-flatc venv="": (install venv)
+    #!/usr/bin/env bash
+    set -e
+    VENV_NAME="{{ venv }}"
+    if [ -z "${VENV_NAME}" ]; then
+        VENV_NAME=$(just --quiet _get-system-venv-name)
+    fi
+    VENV_PATH="{{ VENV_DIR }}/${VENV_NAME}"
+    VENV_PYTHON=$(just --quiet _get-venv-python "${VENV_NAME}")
+    echo "==> Testing bundled flatc compiler in ${VENV_NAME}..."
+    echo ""
+
+    # Test 1: flatc console script works
+    echo "Test 1: Verifying 'flatc --version' works via console script..."
+    FLATC_VERSION=$("${VENV_PATH}/bin/flatc" --version 2>&1)
+    if [ $? -eq 0 ]; then
+        echo "  PASS: flatc console script works"
+        echo "  Version: ${FLATC_VERSION}"
+    else
+        echo "  FAIL: flatc console script failed"
+        exit 1
+    fi
+    echo ""
+
+    # Test 2: Python API get_flatc_path() works
+    echo "Test 2: Verifying autobahn._flatc.get_flatc_path() works..."
+    FLATC_PATH=$(${VENV_PYTHON} -c "from autobahn._flatc import get_flatc_path; print(get_flatc_path())")
+    if [ -x "${FLATC_PATH}" ]; then
+        echo "  PASS: get_flatc_path() returns executable path"
+        echo "  Path: ${FLATC_PATH}"
+    else
+        echo "  FAIL: get_flatc_path() returned non-executable: ${FLATC_PATH}"
+        exit 1
+    fi
+    echo ""
+
+    # Test 3: Python API run_flatc() works
+    echo "Test 3: Verifying autobahn._flatc.run_flatc() works..."
+    RET=$(${VENV_PYTHON} -c "from autobahn._flatc import run_flatc; exit(run_flatc(['--version']))")
+    if [ $? -eq 0 ]; then
+        echo "  PASS: run_flatc(['--version']) works"
+    else
+        echo "  FAIL: run_flatc() failed"
+        exit 1
+    fi
+    echo ""
+
+    # Test 4: reflection.fbs is accessible
+    echo "Test 4: Verifying reflection.fbs is accessible at runtime..."
+    FBS_PATH=$(${VENV_PYTHON} -c 'import autobahn.flatbuffers; from pathlib import Path; p = Path(autobahn.flatbuffers.__file__).parent / "reflection.fbs"; print(p) if p.exists() else exit(1)')
+    if [ $? -eq 0 ]; then
+        FBS_SIZE=$(stat -c%s "${FBS_PATH}" 2>/dev/null || stat -f%z "${FBS_PATH}")
+        echo "  PASS: reflection.fbs found at ${FBS_PATH}"
+        echo "  Size: ${FBS_SIZE} bytes"
+    else
+        echo "  FAIL: reflection.fbs not found"
+        exit 1
+    fi
+    echo ""
+
+    # Test 5: reflection.bfbs is accessible
+    echo "Test 5: Verifying reflection.bfbs is accessible at runtime..."
+    BFBS_PATH=$(${VENV_PYTHON} -c 'import autobahn.flatbuffers; from pathlib import Path; p = Path(autobahn.flatbuffers.__file__).parent / "reflection.bfbs"; print(p) if p.exists() else exit(1)')
+    if [ $? -eq 0 ]; then
+        BFBS_SIZE=$(stat -c%s "${BFBS_PATH}" 2>/dev/null || stat -f%z "${BFBS_PATH}")
+        echo "  PASS: reflection.bfbs found at ${BFBS_PATH}"
+        echo "  Size: ${BFBS_SIZE} bytes"
+    else
+        echo "  FAIL: reflection.bfbs not found"
+        exit 1
+    fi
+    echo ""
+
+    echo "========================================================================"
+    echo "ALL BUNDLED FLATC TESTS PASSED"
+    echo "========================================================================"
+
+# Test installing and verifying a built wheel (used in CI for artifact verification)
+# Usage: just test-wheel-install /path/to/autobahn-*.whl
+test-wheel-install wheel_path:
+    #!/usr/bin/env bash
+    set -e
+    WHEEL_PATH="{{ wheel_path }}"
+
+    if [ ! -f "${WHEEL_PATH}" ]; then
+        echo "ERROR: Wheel file not found: ${WHEEL_PATH}"
+        exit 1
+    fi
+
+    WHEEL_NAME=$(basename "${WHEEL_PATH}")
+    echo "========================================================================"
+    echo "  WHEEL INSTALL TEST"
+    echo "========================================================================"
+    echo ""
+    echo "Wheel: ${WHEEL_NAME}"
+    echo ""
+
+    # Create ephemeral venv name based on wheel
+    EPHEMERAL_VENV="smoke-wheel-$$"
+    EPHEMERAL_PATH="{{ VENV_DIR }}/${EPHEMERAL_VENV}"
+
+    # Extract Python version from wheel filename
+    # Wheel format: {name}-{version}-{python tag}-{abi tag}-{platform tag}.whl
+    # Python tag examples: cp312, cp311, pp311, py3
+    PYTAG=$(echo "${WHEEL_NAME}" | sed -n 's/.*-\(cp[0-9]*\|pp[0-9]*\|py[0-9]*\)-.*/\1/p')
+
+    if [[ "${PYTAG}" =~ ^cp([0-9])([0-9]+)$ ]]; then
+        # CPython wheel (e.g., cp312 -> 3.12)
+        MAJOR="${BASH_REMATCH[1]}"
+        MINOR="${BASH_REMATCH[2]}"
+        PYTHON_SPEC="cpython-${MAJOR}.${MINOR}"
+        echo "Detected CPython ${MAJOR}.${MINOR} wheel"
+    elif [[ "${PYTAG}" =~ ^pp([0-9])([0-9]+)$ ]]; then
+        # PyPy wheel (e.g., pp311 -> pypy-3.11)
+        MAJOR="${BASH_REMATCH[1]}"
+        MINOR="${BASH_REMATCH[2]}"
+        PYTHON_SPEC="pypy-${MAJOR}.${MINOR}"
+        echo "Detected PyPy ${MAJOR}.${MINOR} wheel"
+    elif [[ "${PYTAG}" =~ ^py([0-9])$ ]]; then
+        # Pure Python wheel (e.g., py3) - use system Python
+        SYSTEM_VERSION=$(python3 -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')")
+        PYTHON_SPEC="cpython-${SYSTEM_VERSION}"
+        echo "Pure Python wheel, using system Python ${SYSTEM_VERSION}"
+    else
+        # Fallback to system Python
+        SYSTEM_VERSION=$(python3 -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')")
+        PYTHON_SPEC="cpython-${SYSTEM_VERSION}"
+        echo "Could not detect Python version from wheel, using system Python ${SYSTEM_VERSION}"
+    fi
+
+    echo "Creating ephemeral venv with ${PYTHON_SPEC}..."
+
+    mkdir -p "{{ VENV_DIR }}"
+    uv venv --seed --python "${PYTHON_SPEC}" "${EPHEMERAL_PATH}"
+
+    EPHEMERAL_PYTHON="${EPHEMERAL_PATH}/bin/python3"
+
+    # Install the wheel
+    echo ""
+    echo "Installing wheel..."
+    ${EPHEMERAL_PYTHON} -m pip install "${WHEEL_PATH}"
+
+    # Run smoke tests
+    echo ""
+    VENV_DIR="{{ VENV_DIR }}" just test-smoke "${EPHEMERAL_VENV}"
+
+    # Cleanup
+    echo ""
+    echo "Cleaning up ephemeral venv..."
+    rm -rf "${EPHEMERAL_PATH}"
+
+    echo ""
+    echo "========================================================================"
+    echo "WHEEL INSTALL TEST PASSED: ${WHEEL_NAME}"
+    echo "========================================================================"
+
+# Test installing and verifying a source distribution (used in CI for artifact verification)
+# Usage: just test-sdist-install /path/to/autobahn-*.tar.gz
+test-sdist-install sdist_path:
+    #!/usr/bin/env bash
+    set -e
+    SDIST_PATH="{{ sdist_path }}"
+
+    if [ ! -f "${SDIST_PATH}" ]; then
+        echo "ERROR: Source distribution not found: ${SDIST_PATH}"
+        exit 1
+    fi
+
+    SDIST_NAME=$(basename "${SDIST_PATH}")
+    echo "========================================================================"
+    echo "  SOURCE DISTRIBUTION INSTALL TEST"
+    echo "========================================================================"
+    echo ""
+    echo "Source dist: ${SDIST_NAME}"
+    echo ""
+
+    # Check if cmake is available (required for flatc build)
+    if command -v cmake >/dev/null 2>&1; then
+        echo "cmake: $(cmake --version | head -1)"
+    else
+        echo "WARNING: cmake not found - flatc binary will not be built"
+        echo "         Install cmake for full functionality"
+    fi
+    echo ""
+
+    # Create ephemeral venv name
+    EPHEMERAL_VENV="smoke-sdist-$$"
+    EPHEMERAL_PATH="{{ VENV_DIR }}/${EPHEMERAL_VENV}"
+
+    echo "Creating ephemeral venv: ${EPHEMERAL_VENV}..."
+
+    # Detect system Python version and create venv
+    SYSTEM_VERSION=$(python3 -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')")
+    ENV_NAME="cpy$(echo ${SYSTEM_VERSION} | tr -d '.')"
+    PYTHON_SPEC="cpython-${SYSTEM_VERSION}"
+
+    mkdir -p "{{ VENV_DIR }}"
+    uv venv --seed --python "${PYTHON_SPEC}" "${EPHEMERAL_PATH}"
+
+    EPHEMERAL_PYTHON="${EPHEMERAL_PATH}/bin/python3"
+
+    # Install build dependencies (required for --no-build-isolation)
+    echo ""
+    echo "Installing build dependencies..."
+    ${EPHEMERAL_PYTHON} -m pip install --no-cache-dir setuptools wheel hatchling
+
+    # Install from source distribution
+    # Use --no-build-isolation to allow access to system cmake for building flatc
+    # Use --no-cache-dir to disable HTTP download cache
+    # Use --no-binary autobahn to force building from source (disable wheel cache)
+    echo ""
+    echo "Installing from source distribution..."
+    ${EPHEMERAL_PYTHON} -m pip install --no-build-isolation --no-cache-dir --no-binary autobahn "${SDIST_PATH}"
+
+    # Run smoke tests
+    echo ""
+    VENV_DIR="{{ VENV_DIR }}" just test-smoke "${EPHEMERAL_VENV}"
+
+    # Cleanup
+    echo ""
+    echo "Cleaning up ephemeral venv..."
+    rm -rf "${EPHEMERAL_PATH}"
+
+    echo ""
+    echo "========================================================================"
+    echo "SOURCE DISTRIBUTION INSTALL TEST PASSED: ${SDIST_NAME}"
+    echo "========================================================================"
+
+# -----------------------------------------------------------------------------
 # -- Documentation
 # -----------------------------------------------------------------------------
 
@@ -1286,10 +1538,7 @@ bump-flatbuffers:
 
 # Update vendored flatbuffers Python runtime from git submodule
 update-flatbuffers:
-    echo "==> Updating vendored flatbuffers from submodule..."
-    rm -rf ./src/autobahn/flatbuffers
-    cp -R deps/flatbuffers/python/flatbuffers ./src/autobahn/flatbuffers
-    echo "✓ Flatbuffers vendor updated in src/autobahn/flatbuffers"
+    ./scripts/update_flatbuffers.sh
 
 # Build wheel only (usage: `just build cpy314`)
 build venv="": (install-build-tools venv)
@@ -1549,14 +1798,49 @@ publish venv="" tag="": (publish-pypi venv tag) (publish-rtd tag)
 # -- FlatBuffers Schema Generation
 # -----------------------------------------------------------------------------
 
-# Install latest FlatBuffers compiler (flatc) to /usr/local/bin
-install-flatc:
+# Install FlatBuffers compiler (flatc) to /usr/local/bin (SYSTEM-WIDE)
+#
+# WARNING: You probably DON'T need this!
+#
+# autobahn-python bundles flatc in binary wheels and source distributions.
+# After installing autobahn, you can use the bundled flatc via:
+#
+#   flatc --version              # If installed via pip/wheel
+#   python -m autobahn._flatc    # Alternative invocation
+#
+# This recipe installs a SEPARATE system-wide flatc binary to /usr/local/bin.
+# Only use this if you specifically need a system flatc that is independent
+# of your Python environment.
+#
+install-flatc-system:
     #!/usr/bin/env bash
     set -e
+
+    echo "======================================================================"
+    echo "WARNING: Installing SYSTEM-WIDE flatc to /usr/local/bin"
+    echo "======================================================================"
+    echo ""
+    echo "You probably DON'T need this!"
+    echo ""
+    echo "autobahn-python bundles flatc in binary wheels. After 'pip install autobahn':"
+    echo "  - Run 'flatc --version' to use the bundled compiler"
+    echo "  - The bundled flatc version matches the vendored FlatBuffers runtime"
+    echo ""
+    echo "This recipe installs a SEPARATE system flatc that may have a different"
+    echo "version than the bundled one, potentially causing compatibility issues."
+    echo ""
+    read -p "DO YOU REALLY WANT TO INSTALL SYSTEM-WIDE FLATC? [y/N] " -n 1 -r
+    echo
+    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+        echo "Aborted."
+        exit 0
+    fi
+
     FLATC_VERSION="25.9.23"
     FLATC_URL="https://github.com/google/flatbuffers/releases/download/v${FLATC_VERSION}/Linux.flatc.binary.g++-13.zip"
     TEMP_DIR=$(mktemp -d)
 
+    echo ""
     echo "==> Installing FlatBuffers compiler v${FLATC_VERSION}..."
     echo "    URL: ${FLATC_URL}"
     echo "    Temp dir: ${TEMP_DIR}"
@@ -1576,8 +1860,12 @@ install-flatc:
 
     # Verify installation
     echo "==> Verification:"
-    flatc --version
-    echo "✅ FlatBuffers compiler v${FLATC_VERSION} installed successfully!"
+    /usr/local/bin/flatc --version
+    echo ""
+    echo "✅ System-wide FlatBuffers compiler v${FLATC_VERSION} installed to /usr/local/bin/flatc"
+    echo ""
+    echo "NOTE: The bundled flatc in autobahn wheels may have a different path priority."
+    echo "      Use '/usr/local/bin/flatc' explicitly if you need the system version."
 
 # Clean generated FlatBuffers files
 clean-fbs:
