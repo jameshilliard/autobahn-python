@@ -1,7 +1,35 @@
 :tocdepth: 1
 
+.. _changelog:
+
 Changelog
 =========
+
+25.12.2
+-------
+
+**Build & CI/CD**
+
+* Synchronize CI/CD, FlatBuffers vendoring, and wamp-ai/wamp-cicd submodules between autobahn-python and zlmdb (#1822)
+* Switch manylinux container from 2_34 to 2_28 for x86_64 ISA compatibility (fixes auditwheel flatc bundling)
+* Increase ARM64 build timeout to 60 minutes for QEMU emulation
+* Add .github/workflows/README.md documenting CI/CD architecture
+* Consolidate download-github-release and download-release-artifacts recipes
+* Add checksum verification to artifact download workflow
+
+**FlatBuffers**
+
+* Simplify vendored FlatBuffers - use upstream as-is
+* Track vendored FlatBuffers in git (like zlmdb approach)
+* Add version() function to vendored FlatBuffers runtime
+* Add check_zlmdb_flatbuffers_version_in_sync() for cross-project compatibility
+* Generate .bfbs files for WAMP schemas during wheel build
+
+**Other**
+
+* Rename install-flatc to install-flatc-system with prominent warning
+* Remove legacy readthedocs.yml to activate .readthedocs.yaml
+* Remove dev-latest optional dependency (PyPI rejects direct URLs)
 
 25.12.1
 -------

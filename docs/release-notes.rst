@@ -8,6 +8,61 @@ Release Notes
 This page provides a high-level overview of important changes in each release.
 For detailed technical changes, see the :ref:`changelog <changelog>`.
 
+25.12.2 (2025-12-15)
+--------------------
+
+**Release Type:** Stable release
+
+**Source Build:** `master-202512150317 <https://github.com/crossbario/autobahn-python/releases/tag/master-202512150317>`__
+
+Highlights
+^^^^^^^^^^
+
+This release synchronizes the CI/CD infrastructure and FlatBuffers vendoring
+between autobahn-python and zlmdb, ensuring consistent behavior for applications
+using both libraries (like Crossbar.io).
+
+Key changes:
+
+* **manylinux compatibility fix**: Switched from manylinux_2_34 to manylinux_2_28
+  containers to avoid x86_64_v2 ISA requirements that caused auditwheel failures
+  when bundling the flatc compiler.
+
+* **FlatBuffers version sync**: Added ``check_zlmdb_flatbuffers_version_in_sync()``
+  function to verify autobahn and zlmdb use compatible FlatBuffers runtimes.
+
+* **Improved release workflow**: Consolidated artifact download recipes with
+  checksum verification for supply chain security.
+
+Artifact Verification
+^^^^^^^^^^^^^^^^^^^^^
+
+All release artifacts include SHA256 checksums for integrity verification.
+
+* `wheels-CHECKSUMS.sha256 <https://github.com/crossbario/autobahn-python/releases/download/master-202512150317/wheels-CHECKSUMS.sha256>`__
+* `docker-CHECKSUMS.sha256 <https://github.com/crossbario/autobahn-python/releases/download/master-202512150317/docker-CHECKSUMS.sha256>`__
+* `arm64-CHECKSUMS.sha256 <https://github.com/crossbario/autobahn-python/releases/download/master-202512150317/arm64-CHECKSUMS.sha256>`__
+
+To verify a downloaded artifact:
+
+.. code-block:: bash
+
+   # Download checksum file
+   curl -LO https://github.com/crossbario/autobahn-python/releases/download/master-202512150317/wheels-CHECKSUMS.sha256
+
+   # Verify a wheel (example)
+   openssl sha256 autobahn-25.12.2-cp311-cp311-manylinux_2_28_x86_64.whl
+   # Compare output with corresponding line in CHECKSUMS file
+
+Release Links
+^^^^^^^^^^^^^
+
+* `GitHub Release <https://github.com/crossbario/autobahn-python/releases/tag/v25.12.2>`__
+* `PyPI Package <https://pypi.org/project/autobahn/25.12.2/>`__
+* `Documentation <https://autobahn.readthedocs.io/en/v25.12.2/>`__
+
+**Detailed Changes:** See :ref:`changelog` (25.12.2 section)
+
 25.12.1 (2025-12-10)
 --------------------
 
