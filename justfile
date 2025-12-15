@@ -2346,6 +2346,7 @@ wstest-consolidate-reports:
     du -hs docs/_static/websocket/conformance/
 
 # Download GitHub release artifacts (usage: `just download-github-release` for nightly, or `just download-github-release stable`)
+# Downloads wheels, sdist, conformance reports, and FlatBuffers schemas
 download-github-release release_type="nightly":
     #!/usr/bin/env bash
     set -e
@@ -2358,8 +2359,7 @@ download-github-release release_type="nightly":
     case "${RELEASE_TYPE}" in
         nightly)
             echo "==> Finding latest nightly release (tagged as master-YYYYMMDDHHMM)..."
-            RELEASE_TAG=$(curl -s "https://api.github.com/repos/crossbario/autobahn-python/releases" \
-              | grep '"tag_name":' \
+            RELEASE_TAG=$(gh release list --repo crossbario/autobahn-python --limit 20 \
               | grep -o 'master-[0-9]*' \
               | head -1)
             if [ -z "$RELEASE_TAG" ]; then
@@ -2371,9 +2371,7 @@ download-github-release release_type="nightly":
 
         stable|latest)
             echo "==> Finding latest stable release..."
-            RELEASE_TAG=$(curl -s "https://api.github.com/repos/crossbario/autobahn-python/releases/latest" \
-              | grep '"tag_name":' \
-              | sed 's/.*"tag_name": "\([^"]*\)".*/\1/')
+            RELEASE_TAG=$(gh release view --repo crossbario/autobahn-python --json tagName -q '.tagName' 2>/dev/null || true)
             if [ -z "$RELEASE_TAG" ]; then
                 echo "❌ ERROR: No stable release found"
                 exit 1
@@ -2383,9 +2381,8 @@ download-github-release release_type="nightly":
 
         development|dev)
             echo "==> Finding latest development release (tagged as fork-*)..."
-            RELEASE_TAG=$(curl -s "https://api.github.com/repos/crossbario/autobahn-python/releases" \
-              | grep '"tag_name":' \
-              | grep -o 'fork-[^"]*' \
+            RELEASE_TAG=$(gh release list --repo crossbario/autobahn-python --limit 20 \
+              | grep -o 'fork-[^[:space:]]*' \
               | head -1)
             if [ -z "$RELEASE_TAG" ]; then
                 echo "❌ ERROR: No development release found"
@@ -2401,44 +2398,58 @@ download-github-release release_type="nightly":
             ;;
     esac
 
-    BASE_URL="https://github.com/crossbario/autobahn-python/releases/download/${RELEASE_TAG}"
-
-    # Create temporary directory for artifacts
+    # Create download directory
     DOWNLOAD_DIR="/tmp/autobahn-release-artifacts-${RELEASE_TAG}"
     mkdir -p "${DOWNLOAD_DIR}"
+
+    echo ""
+    echo "==> Downloading all release artifacts using gh..."
+    gh release download "${RELEASE_TAG}" \
+        --repo crossbario/autobahn-python \
+        --dir "${DOWNLOAD_DIR}" \
+        --clobber
+
     cd "${DOWNLOAD_DIR}"
 
     echo ""
-    echo "==> Downloading WebSocket conformance reports..."
-    if curl -fL "${BASE_URL}/autobahn-python-websocket-conformance-${RELEASE_TAG}.tar.gz" \
-        -o conformance.tar.gz; then
-        echo "✅ Downloaded: autobahn-python-websocket-conformance-${RELEASE_TAG}.tar.gz"
+    echo "==> Extracting documentation artifacts..."
+
+    # Extract conformance reports (for docs integration)
+    CONFORMANCE_TARBALL="autobahn-python-websocket-conformance-${RELEASE_TAG}.tar.gz"
+    if [ -f "${CONFORMANCE_TARBALL}" ]; then
+        mkdir -p conformance-extracted
+        tar -xzf "${CONFORMANCE_TARBALL}" -C conformance-extracted
+        # Move with-nvx and without-nvx to top level for docs-integrate-github-release
+        if [ -d "conformance-extracted/with-nvx" ]; then
+            mv conformance-extracted/with-nvx .
+        fi
+        if [ -d "conformance-extracted/without-nvx" ]; then
+            mv conformance-extracted/without-nvx .
+        fi
+        rm -rf conformance-extracted
+        echo "✅ Extracted conformance reports to with-nvx/, without-nvx/"
     else
-        echo "⚠️  Failed to download conformance reports (may not exist for this release)"
+        echo "⚠️  No conformance tarball found"
     fi
 
-    echo ""
-    echo "==> Downloading FlatBuffers schemas..."
-    if curl -fL "${BASE_URL}/flatbuffers-schema.tar.gz" \
-        -o flatbuffers-schema.tar.gz; then
-        echo "✅ Downloaded: flatbuffers-schema.tar.gz"
+    # Extract FlatBuffers schemas (for docs integration)
+    if [ -f "flatbuffers-schema.tar.gz" ]; then
+        mkdir -p flatbuffers
+        tar -xzf flatbuffers-schema.tar.gz -C flatbuffers
+        echo "✅ Extracted FlatBuffers schemas to flatbuffers/"
     else
-        echo "⚠️  Failed to download FlatBuffers schemas (may not exist for this release)"
+        echo "⚠️  No FlatBuffers schema tarball found"
     fi
 
     echo ""
-    echo "==> Extracting artifacts..."
-    if [ -f conformance.tar.gz ]; then
-        tar -xzf conformance.tar.gz
-        echo "✅ Extracted conformance reports"
-    fi
-    if [ -f flatbuffers-schema.tar.gz ]; then
-        tar -xzf flatbuffers-schema.tar.gz
-        echo "✅ Extracted FlatBuffers schemas"
-    fi
-
+    echo "==> Downloaded artifacts inventory:"
     echo ""
-    echo "==> Downloaded and extracted artifacts:"
+    WHEEL_COUNT=$(find . -maxdepth 1 -name "*.whl" | wc -l)
+    SDIST_COUNT=$(find . -maxdepth 1 -name "autobahn-*.tar.gz" | wc -l)
+    echo "Wheels:       ${WHEEL_COUNT}"
+    echo "Source dist:  ${SDIST_COUNT}"
+    echo ""
+    echo "Files:"
     ls -lh
 
     echo ""
@@ -2449,9 +2460,11 @@ download-github-release release_type="nightly":
     echo "Release: ${RELEASE_TAG}"
     echo "Location: ${DOWNLOAD_DIR}"
     echo ""
-    echo "To use these artifacts:"
+    echo "Contents:"
+    echo "  - Wheels: ${DOWNLOAD_DIR}/*.whl"
+    echo "  - Source dist: ${DOWNLOAD_DIR}/autobahn-*.tar.gz"
     echo "  - Conformance reports: ${DOWNLOAD_DIR}/with-nvx/, ${DOWNLOAD_DIR}/without-nvx/"
-    echo "  - FlatBuffers schemas: ${DOWNLOAD_DIR}/*.fbs, ${DOWNLOAD_DIR}/*.bfbs"
+    echo "  - FlatBuffers schemas: ${DOWNLOAD_DIR}/flatbuffers/"
     echo ""
 
 # Integrate downloaded GitHub release artifacts into docs build (usage: `just docs-integrate-github-release` or `just docs-integrate-github-release master-202510180103`)
@@ -2582,6 +2595,24 @@ docs-integrate-github-release release_tag="":
         fi
     fi
 
+    # Copy chain-of-custody / verification files
+    echo "==> Copying chain-of-custody files..."
+    mkdir -p docs/_build/html/_static/release
+    CUSTODY_COUNT=0
+    for pattern in "*CHECKSUMS.sha256" "*VALIDATION.txt" "*build-info.txt" "*.verify.txt"; do
+        for f in ${DOWNLOAD_DIR}/${pattern}; do
+            if [ -f "$f" ]; then
+                cp "$f" docs/_build/html/_static/release/
+                CUSTODY_COUNT=$((CUSTODY_COUNT + 1))
+            fi
+        done
+    done
+    if [ "${CUSTODY_COUNT}" -gt 0 ]; then
+        echo "✅ Copied ${CUSTODY_COUNT} chain-of-custody files to docs/_build/html/_static/release/"
+    else
+        echo "⚠️  No chain-of-custody files found in ${DOWNLOAD_DIR}"
+    fi
+
     echo ""
     echo "════════════════════════════════════════════════════════════"
     echo "✅ GitHub release artifacts integrated into built documentation"
@@ -2589,6 +2620,11 @@ docs-integrate-github-release release_tag="":
     echo ""
     echo "Integrated artifacts from: ${RELEASE_TAG}"
     echo "Target location: docs/_build/html/_static/"
+    echo ""
+    echo "Contents integrated:"
+    echo "  - Conformance reports: docs/_build/html/_static/websocket/conformance/"
+    echo "  - FlatBuffers schemas: docs/_build/html/_static/flatbuffers/"
+    echo "  - Chain-of-custody:    docs/_build/html/_static/release/"
     echo ""
     echo "Next steps:"
     echo "  1. View documentation: just docs-view"
