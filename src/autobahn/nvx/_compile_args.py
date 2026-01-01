@@ -124,7 +124,7 @@ See Also
 
 import os
 import sys
-import platform
+import sysconfig
 
 
 def is_building_wheel():
@@ -194,7 +194,7 @@ def get_compile_args():
         return ["/O2", "/W3"]
 
     # GCC/Clang on POSIX (Linux, macOS, *BSD)
-    machine = platform.machine().lower()
+    machine = sysconfig.get_platform().lower().split("-")[-1]
 
     # Base flags for all POSIX platforms
     base_args = [
@@ -245,7 +245,7 @@ def _get_safe_march_flag(machine):
     Parameters
     ----------
     machine : str
-        Machine architecture from platform.machine().lower()
+        Machine architecture from sysconfig.get_platform().lower().split("-")[-1]
 
     Returns
     -------
